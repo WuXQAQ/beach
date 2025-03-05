@@ -1,7 +1,16 @@
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
+
+class MCDropout(nn.Module):
+    def __init__(self, p=0.5):
+        super().__init__()
+        self.p = p
+
+    def forward(self, x):
+        return F.dropout(x, p=self.p, training=True)
 
 class GaussianPriorLayer(nn.Module):
     def __init__(self, in_features, out_features, alpha_i):
@@ -33,25 +42,33 @@ class GaussianPriorLayer(nn.Module):
         return reg_loss
 
 
+
 class MLPwithARD(nn.Module):
     def __init__(self, input_size, output_size, alpha_list):
         super(MLPwithARD, self).__init__()
         self.network = nn.Sequential(
-            GaussianPriorLayer(input_size, 64, alpha_list),  # 第一层
+            GaussianPriorLayer(input_size, 64, alpha_list),
             nn.LeakyReLU(),
-            nn.Linear(64, 64),  # 第二层
+            MCDropout(0.3),
+            nn.Linear(64, 64),
             nn.LeakyReLU(),
-            nn.Linear(64, 64),  # 第二层
+            MCDropout(0.3),
+            nn.Linear(64, 64),
             nn.LeakyReLU(),
-            nn.Linear(64, 32),  # 第二层
+            MCDropout(0.3),
+            nn.Linear(64, 32),
             nn.LeakyReLU(),
-            nn.Linear(32, 32),  # 第三层
+            MCDropout(0.3),
+            nn.Linear(32, 32),
             nn.LeakyReLU(),
-            nn.Linear(32, 32),  # 第四层
+            MCDropout(0.3),
+            nn.Linear(32, 32),
             nn.LeakyReLU(),
-            nn.Linear(32, 16),  # 第四层
+            MCDropout(0.3),
+            nn.Linear(32, 16),
             nn.LeakyReLU(),
-            nn.Linear(16, output_size)  # 输出层
+            MCDropout(0.3),
+            nn.Linear(16, output_size)
         )
 
     def forward(self, x):
@@ -64,16 +81,16 @@ class MLPwithARD(nn.Module):
             if isinstance(layer, GaussianPriorLayer):
                 reg_loss += layer.regularization_loss()
         return reg_loss
-    def print_input_alpha(self):
-        # 打印输入特征的 alpha_i
+    def print_input_alpha(self, isprint):
         input_layer = self.network[0]  # 第一层是输入层
-        print(f"Input feature alpha_i: {input_layer.alpha_i}")
+        if isprint:
+            print(f"Input feature alpha_i: {input_layer.alpha_i}")
         return input_layer.alpha_i
 
 class CombinedModelwithARD(nn.Module):
     def __init__(self, alpha_list):
         super(CombinedModelwithARD, self).__init__()
-        self.mlp1 = MLPwithARD(input_size=17, output_size=2, alpha_list=alpha_list)  # 输入大小调整为18，包括随机特征
+        self.mlp1 = MLPwithARD(input_size=19, output_size=3, alpha_list=alpha_list)  # 输入大小调整为18，包括随机特征
 
     def forward(self, features, x):
         # 向输入特征中添加一个随机特征
@@ -81,10 +98,10 @@ class CombinedModelwithARD(nn.Module):
         features_with_random = torch.cat([features], dim=1)  # 将随机特征拼接到输入特征中
 
         # 通过 MLP 模型计算输出
-        A_B = self.mlp1(features_with_random)  # 输出A和B
-        A, B = A_B[:, 0], A_B[:, 1]
-        B = torch.maximum(B, torch.tensor(1e-10).to(B.device))
-        output = A * (x ** B)
+        A_B_m = self.mlp1(features_with_random)  # 输出A和B
+        A, B ,m = A_B_m[:, 0], A_B_m[:, 1], A_B_m[:, 2]
+        x = torch.maximum(x, torch.tensor(1e-10).to(x.device))
+        output = A * (x ** B) + m
 
         return output
 
